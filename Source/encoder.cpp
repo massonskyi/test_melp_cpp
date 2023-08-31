@@ -2,36 +2,47 @@
 #include "Encoder.hpp"
 #include "Coeffs.hpp"
 #include "stage.h"
-
 #include <numeric>
 #include <algorithm>
-
-
+#include "codebook_fmcq.hpp"
+#include "MVSQ.hpp"
 Encoder::Encoder()
-	: pavg(50),G2p(20), envelopes_filter(smooth_num, smooth_den),
+	: pavg(50),G2p(20),array_hamming({}), envelopes_filter(smooth_num, smooth_den),
 	  cheb_filter(dcr_num, dcr_den),
 	  butter_filter(butt_1000num, butt_1000den),
-	  hpFilter(butt_1000num, butt_1000den),
 	  band_filter({
 		BandFilter(butt_bp_num[0],butt_bp_den[0]),
 		BandFilter(butt_bp_num[1],butt_bp_den[1]),
 		BandFilter(butt_bp_num[2],butt_bp_den[2]),
 		BandFilter(butt_bp_num[3],butt_bp_den[3]),
-		BandFilter(butt_bp_num[4],butt_bp_den[4])}),
-		lpc({}), conv({}), qlpc({}), buffer({50,50,50}),
-		koef_lpc({}), temp({}), LSF({}),
-		sig_in({}), sig_1000({}),envelopes({{}}),
-		bands({{}}),tmp1({{}}), e_resid({}), fltd_resid({}), tmp({}){
+		BandFilter(butt_bp_num[4],butt_bp_den[4])
+	  }),
+	  hpFilter(butt_1000num, butt_1000den),
+	  conv_lpc(),
+	  conv_e_resid(),
+	  lpc({}), conv({}), qlpc({}), buffer({50,50,50}),
+	  koef_lpc({}), temp({}), LSF({}),
+	  sig_in({}), sig_1000({}),envelopes({{}}),
+	  bands({{}}),
+	  tmp1({{}}),
+	  e_resid({}),
+	  fltd_resid({}),
+	  tresid({}),
+	  copy_sigin({}),
+	  resid2({}),
+	  tmp({}){
+	hamming.use_hamming(200, array_hamming);
 }
 
 
-void Encoder::encode(const std::array<float, 180>& signal){
+void Encoder::encode(std::array<float, 180>& signal){
 	int cur_intp = 0, Qpitch = 0;
 	std::array<float,10>lsfs;
 	std::array<float,10>lpc2;
+	mvsq *mv = new mvsq();
 	int jitter = 0;
 	float peak = 0;
-	std::array<float, 4> MVSQ = {110., 50., 23., 41.};
+	std::array<float,1> a({});
 	std::array<float, 2> G({});
 	std::array<float, 5> vp({});
 	std::array<float, 4> ls({});
@@ -41,7 +52,7 @@ void Encoder::encode(const std::array<float, 180>& signal){
 
 	updating_buffers();
 
-	cheb_filter.step((std::array<float, 180>::iterator)signal.begin(), sig_in.begin() + 180);
+	cheb_filter.step(signal.begin(), sig_in.begin() + 180);
 
 	butter_filter.step(sig_in.begin() + 180, sig_1000.begin() + 180);
 
@@ -60,13 +71,15 @@ void Encoder::encode(const std::array<float, 180>& signal){
 
 	std::copy(sig_in.begin() + 80, sig_in.begin() + 280, temp.begin());
 
-	lpc.lpc(temp, koef_lpc);
+	lpc.lpc(array_hamming, temp, koef_lpc);
     for (int j = 2; j < 12; j++) {
         koef_lpc[j - 2] *= pow(0.994, j);
     }
 	std::copy(koef_lpc.begin(), koef_lpc.end(), klpc.begin() + 1);
     klpc[0] = 1.0;
-    lpc_residual(klpc,sig_in,e_resid);
+    // lpc_residual(klpc,sig_in,e_resid);
+    conv_e_resid.set_coeffs(klpc, a);
+    conv_e_resid.step(sig_in.begin(), e_resid.begin());
 
     peak = calculatePeak(e_resid.begin() + 10,106,265);
     if(peak > 1.34) vp[0] = 1;
@@ -87,21 +100,33 @@ void Encoder::encode(const std::array<float, 180>& signal){
 
     lsf_clmp(LSF, LSF);
 
-    qlpc.msvq(koef_lpc, LSF, ls);
-
+    // qlpc.msvq(koef_lpc, LSF, ls);
+    melp_msvq(mv, koef_lpc, LSF, st1, st2, ls);
     QGain(G,G2p);
 
     G2p = G[1];
 
     if(vp[0] > 0.6) Qpitch = melp_Qpitch(pr3.first);
 
-    d_lsf(MVSQ, lsfs);
+    d_lsf(ls, lsfs);
 
-    conv.melp_lsf2lpc(lsfs, lpc2);
-    // lpc_residual(lpc2, sig_in.begin() + 75, sig_in.begin()+ 285);
+    conv.lsf2lpc(lsfs, lpc2);
+    conv_lpc.set_coeffs(lpc2, a);
+    std::copy(sig_in.begin() + 75, sig_in.begin() + 285, copy_sigin.begin());
+    conv_lpc.step(copy_sigin.begin() + 75, tresid.begin());
 
-    int x = 543;
-
+    for(int i = 0; i < 200; i++){
+    	resid2[i] = *(tresid.begin() + 10 + i) * array_hamming[i];
+    }
+    fft<512>(resid2);
+    for(int i = 0;i < 512; i++){
+    	magf[i] = std::abs(resid2[i]);
+    }
+    find_harm(magf, pr3.first);
+    computeWeights(pr3.first);
+    int QFM = melp_FMCQ(FMCQ_CODEBOOK);
+    // ParamsFrame(ls,G,vp,QFM,Qpitch,jitter);
+    int breakp = 0;
 }
 
 void Encoder::updating_buffers(){
@@ -283,12 +308,6 @@ float Encoder::calculatePeak(const std::array<float, 350>::iterator e_resid, int
     return peak;
 }
 
-void Encoder::lpc_residual(const std::array<float, 11>& lpc_coeffs,
-		const std::array<float, 360>& sig_in,
-		std::array<float, 360>& output){
-    lpc.convolution(lpc_coeffs, sig_in, output);
-}
-
 std::pair<float,float> Encoder::pitch3(const std::array<float, 360>& sig_in, const std::array<float, 360>& resid,
 		float p2, float pavg){
 	float Dth = 0;
@@ -397,7 +416,7 @@ void Encoder::lsf_clmp(const std::array<float, 10>& LSF, std::array<float, 10>& 
 	int dmin = 50;
 	float d = 0, s1 = 0, s2 = 0, tmpv = 0;
 	for(int i = 0; i < 10; i++){
-		tmp[i] = LSF[i] * 4000 / pi;
+		tmp[i] = LSF[i] * 4000 / 3.14159265358979323846;
 	}
 
 	for(int i = 0; i < 9; i++){

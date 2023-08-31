@@ -1,226 +1,38 @@
-#include "Converter.hpp"
-
-#include <algorithm>
-#include <numeric>
-#include <cmath>
+#include <iostream>
 #include <vector>
+#include <cmath>
+#include <array>
+#include <algorithm>
 
-const float pi = 3.141592653589793;
+const float pi = 3.141592653589793f;
 
-/**
- * @brief This is the constructor for the Converter class.
- *
- * It initializes the Converter object with empty arrays.
- *
- * @param None
- * @return None
- */
-Converter::Converter()
-	: P({{}}), b({{}}), f1({}), tmp({}), tmp2({}), w({{}})
+std::vector<float> melp_lsf21pc(std::vector<float> &lsfs)
 {
-}
+    std::vector<std::vector<float>> w(2, std::vector<float>(5));
+    std::vector<float> f(10);
+    std::fill(f.begin(), f.end(),0.0f);
+    for (int i = 0; i < 10; i++)
+    {
+        lsfs[i] = pi * lsfs[i] / 4000;
+    }
+    for (int i = 0; i < 5; i++)
+    {
+        for (int j = 0; j < 2; j++)
+        {
+            w[j][i] = lsfs[(i * 2) + j];
+        }
+    }
 
-/**
- * @brief Clears the arrays used in the lpc2lsf conversion process, setting all their values to zero.
- *
- * This function is called before the lpc2lsf conversion process to ensure that the arrays used in the process are cleared and ready to be used.
- *
- * @param None
- * @return None
- */
-void Converter::clear_lpc2lsf()
-{
-	for (int i = 0; i < 2; i++)
-	{
-		std::fill(P[i].begin(), P[i].end(), 0.0f);
-	}
+    for (int i = 0; i < 2; i++)
+    {
+        for (int j = 0; j < 5; j++)
+        {
+            w[i][j] = std::cos(w[i][j]);
+        }
+    }
+    f[0] = 0.5 * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[0][3] - 2 * w[0][4] - 2 * w[1][0] - 2 * w[1][1] - 2 * w[1][2] - 2 * w[1][3] - 2 * w[1][4]);
 
-	for (int i = 0; i < 6; i++)
-	{
-		std::fill(b[i].begin(), b[i].end(), 0.0f);
-	}
-	std::fill(f1.begin(), f1.end(), 0.0f);
-}
-
-void Converter::clear_lsf2lpc()
-{
-	for (int i = 0; i < 2; i++)
-	{
-		std::fill(w[i].begin(), w[i].end(), 0.0f);
-	}
-}
-
-/**
- * Converts Linear Predictive Coding (LPC) coefficients to Line Spectral Frequencies (LSF) coefficients.
- *
- * @param koef_lpc - An array of 10 LPC coefficients.
- * @param out - An array of 10 LSF coefficients.
- *
- * @return None.
- */
-void Converter::lpc2lsf(const std::array<float, 10> &koef_lpc,
-						std::array<float, 10> &out)
-{
-	clear_lpc2lsf();
-
-	int i, j, t, ii, l = 1;
-
-	float r, k = 0, y1 = 0, y2 = 0, x = 0, x1 = 0, x2 = 0, cosx = 0, temp = 0;
-
-	P[0][0] = 1;
-	P[1][0] = 1;
-
-	for (i = 0; i < 5; i++)
-	{
-		P[0][i + 1] = koef_lpc[i] + koef_lpc[9 - i] - P[0][i];
-		P[1][i + 1] = koef_lpc[i] - koef_lpc[9 - i] + P[1][i];
-	}
-
-	for (i = 0; i < 2; i++)
-	{
-		P[i][5] /= 2;
-		std::reverse(P[i].begin(), P[i].end());
-	}
-
-	b[0][0] = 1;
-	b[1][1] = 1;
-
-	for (i = 0; i < 4; i++)
-	{
-
-		std::fill(tmp.begin(), tmp.end(), 0.0f);
-		std::fill(tmp2.begin(), tmp2.end(), 0.0f);
-
-		for (j = 0; j < i + 2; j++)
-		{
-			tmp[j + 1] = b[i + 1][j];
-		}
-		tmp[0] = 0;
-
-		for (j = 0; j < i + 1; j++)
-		{
-			tmp2[j] = b[i][j];
-		}
-		tmp2[i + 1] = 0;
-		tmp2[i + 2] = 0;
-
-		for (j = 0; j < i + 3; j++)
-		{
-			b[i + 2][j] = 2 * tmp[j] - tmp2[j];
-		}
-	}
-
-	for (i = 0; i < 2; i++)
-	{
-		for (j = 0; j < 6; j++)
-		{
-			r = 0.0f;
-			for (t = 0; t < 6; t++)
-			{
-				r += P[i][t] * b[t][j];
-			}
-			P[i][j] = r;
-		}
-	}
-	f1[0] = 0;
-	for (ii = 0; ii < 2; ii++)
-	{
-		k = pi / 60;
-		y1 = std::accumulate(P[ii].begin(), P[ii].end(), 0.0);
-		i = 1;
-		while (i < 61)
-		{
-			cosx = std::cos(i * k);
-			y2 = 0;
-			for (j = 1; j < 6; j++)
-			{
-				y2 += std::pow(cosx, j) * P[ii][j];
-			}
-			y2 += P[ii][0];
-			if (y2 == 0)
-			{
-				f1[l] = (i * k);
-				l += 1;
-				i += 1;
-				cosx = std::cos(i * k);
-				y2 = 0;
-				for (j = 1; j < 6; j++)
-				{
-					y2 += std::pow(cosx, j) * P[ii][j];
-				}
-				y2 += P[ii][0];
-			}
-			else if (y1 * y2 < 0)
-			{
-				x1 = (i - 1) * k;
-				x2 = i * k;
-				for (j = 0; j < 4; j++)
-				{
-					x = (x1 + x2) / 2;
-					cosx = std::cos(x);
-					temp = 0;
-					for (j = 1; j < 6; j++)
-					{
-						temp += std::pow(cosx, j) * P[ii][j];
-					}
-					temp += P[ii][0];
-					if (temp == 0)
-					{
-						f1[l] = x;
-						l += 1;
-						break;
-					}
-					else if (temp * y2 < 0)
-						x1 = x;
-					else
-					{
-						x2 = x;
-						y2 = temp;
-					}
-				}
-				if (temp != 0)
-				{
-					f1[l] = (x1 + x2) / 2;
-					l += 1;
-				}
-			}
-			y1 = y2;
-			i += 1;
-		}
-	}
-	out[0] = f1[1];
-	for (i = 1; i < 6; i++)
-	{
-		out[i * 2] = f1[i + 1];
-		out[i * 2 - 1] = f1[i + 5];
-	}
-}
-
-void Converter::lsf2lpc(std::array<float, 10>& lsfs, std::array<float, 10>& out)
-{
-	for (int i = 0; i < 10; i++)
-	{
-		lsfs[i] = pi * lsfs[i] / 4000;
-	}
-	for (int i = 0; i < 5; i++)
-	{
-		for (int j = 0; j < 2; j++)
-		{
-			w[j][i] = lsfs[(i * 2) + j];
-		}
-	}
-
-	for (int i = 0; i < 2; i++)
-	{
-		for (int j = 0; j < 5; j++)
-		{
-			w[i][j] = std::cos(w[i][j]);
-		}
-	}
-
-	out[0] = 0.5 * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[0][3] - 2 * w[0][4] - 2 * w[1][0] - 2 * w[1][1] - 2 * w[1][2] - 2 * w[1][3] - 2 * w[1][4]);
-
-	out[1] = 0.5 * (10 - 2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[1][4] -
+    f[1] = 0.5 * (10 - 2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[1][4] -
                   2 * w[0][1] * (-2 * w[0][0] - 2 * w[0][4]) -
                   2 * w[0][2] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][4]) -
                   2 * w[0][3] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][3] - 2 * w[0][4]) -
@@ -230,7 +42,7 @@ void Converter::lsf2lpc(std::array<float, 10>& lsfs, std::array<float, 10>& out)
                   2 * w[1][3] * (-2 * w[1][0] - 2 * w[1][1] - 2 * w[1][2] - 2 * w[1][4]) +
                   2 * w[1][4] + 4 * w[1][0] * w[1][4]);
 
-	out[2] = 0.5 * (-8 * w[0][0] - 4 * w[0][1] - 2 * w[0][2] -
+    f[2] = 0.5 * (-8 * w[0][0] - 4 * w[0][1] - 2 * w[0][2] -
                   2 * w[0][1] * (-2 * w[0][0] - 2 * w[0][4]) -
                   2 * w[0][2] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][4]) -
                   2 * w[0][3] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[0][4]) -
@@ -245,8 +57,8 @@ void Converter::lsf2lpc(std::array<float, 10>& lsfs, std::array<float, 10>& out)
                   2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4]) -
                   2 * w[1][2] * (3 - 2 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) + 4 * w[1][0] * w[1][4]) -
                   2 * w[1][3] * (4 - 2 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) - 2 * w[1][2] * (-2 * w[1][0] - 2 * w[1][1] - 2 * w[1][4]) + 4 * w[1][0] * w[1][4]));
-
-	out[3] = 0.5 * (20 - 8 * w[0][0] - 4 * w[0][1] - 2 * w[0][2] -
+ 
+    f[3] = 0.5 * (20 - 8 * w[0][0] - 4 * w[0][1] - 2 * w[0][2] -
                   6 * w[0][1] * (-2 * w[0][0] -2 * w[0][4]) -
                   2 * w[0][2] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][4]) - 8 * w[0][4] +
                   12 * w[0][0] * w[0][4] - 2 * w[0][1] * (2 + 4 * w[0][0] * w[0][4]) -
@@ -261,8 +73,7 @@ void Converter::lsf2lpc(std::array<float, 10>& lsfs, std::array<float, 10>& out)
                   2 * w[1][3] * (4 - 2 * w[1][1] * (-2 * w[1][1] - 2 * w[1][4]) - 2 * w[1][2] * (-2 * w[1][0] - 2 * w[1][1] - 2 * w[1][4]) + 4 * w[1][0] * w[1][4]) -
                   2 * w[1][2] * (-4 * w[1][0] - 4 * w[1][4] - 2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4])) -
                   2 * w[1][3] * (-6 * w[1][0] - 2 * w[1][1] - 6 * w[1][4] - 2 * w[1][1] * (2 + 4 * w[1][0] * w[0][4]) - 2 * w[1][2] * (3 - 2 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) + 4 * w[1][0] * w[1][4])));
-
-	out[4] = 0.5 * (-12 * w[0][0] - 4 * w[0][1] - 6 * w[0][1] * (-2 * w[0][0] - 2 * w[0][4]) -
+    f[4] = 0.5 * (-12 * w[0][0] - 4 * w[0][1] - 6 * w[0][1] * (-2 * w[0][0] - 2 * w[0][4]) -
                   2 * w[0][2] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][4]) - 12 * w[0][4] +//
                   12 * w[0][0] * w[0][4] - 4 * w[0][1] * (2 + 4 * w[0][0] * w[0][4]) -
                   4 * w[0][2] * (3 - 2 * w[0][1] * (-2 * w[0][0] - 2 * w[0][4]) + 4 * w[0][0] * w[0][4]) -
@@ -276,7 +87,7 @@ void Converter::lsf2lpc(std::array<float, 10>& lsfs, std::array<float, 10>& out)
                   2 * w[1][2] * (-4 * w[1][0] - 4 * w[1][4] - 2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4])) +
                   2 * w[1][3] * (-6 * w[1][0] - 2 * w[1][1] - 6 * w[1][4] - 2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4]) - 2 * w[1][2] * (3 - 2 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) + 4 * w[1][0] * w[1][4])) -
                   2 * w[1][3] * (6 - 4 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) + 8 * w[1][0] * w[1][4] - 2 * w[1][2] * (-4 * w[1][0] - 4 * w[1][4] - 2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4]))));
-	out[5] = 0.5 * (20 - 12 * w[0][0] - 4 * w[0][1] -
+    f[5] = 0.5 * (20 - 12 * w[0][0] - 4 * w[0][1] -
                   6 * w[0][1] * (-2 * w[0][0] - 2 * w[0][4]) -
                   2 * w[0][2] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][4]) - 12 * w[0][4] +
                   12 * w[0][0] * w[0][4] - 4 * w[0][1] * (2 + 4 * w[0][0] * w[0][4]) -
@@ -291,7 +102,7 @@ void Converter::lsf2lpc(std::array<float, 10>& lsfs, std::array<float, 10>& out)
                   2 * w[1][2] * (-4 * w[1][0] - 4 * w[1][4] - 2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4])) -
                   2 * w[1][3] * (-6 * w[1][0] - 2 * w[1][1] - 6 * w[1][4] - 2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4]) - 2 * w[1][2] * (3 - 2 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) + 4 * w[1][0] * w[1][4])) +
                   2 * w[1][3] * (6 - 4 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) + 8 * w[1][0] * w[1][4] - 2 * w[1][2] * (-4 * w[1][0] - 4 * w[1][4] - 2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4]))));
-	out[6] = 0.5 * (-8 * w[0][0] - 4 * w[0][1] - 2 * w[0][2] -
+    f[6] = 0.5 * (-8 * w[0][0] - 4 * w[0][1] - 2 * w[0][2] -
                   6 * w[0][1] * (-2 * w[0][0] - 2 * w[0][4]) -
                   2 * w[0][2] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][4]) - 8 * w[0][4] +
                   12 * w[0][0]* w[0][4] - 2 * w[0][1] * (2 + 4 * w[0][0] * w[0][4]) -
@@ -306,7 +117,7 @@ void Converter::lsf2lpc(std::array<float, 10>& lsfs, std::array<float, 10>& out)
                   2 * w[1][3] * (4 - 2 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) - 2 * w[1][2] * (-2 * w[1][0] - 2 * w[1][1] - 2 * w[1][4]) + 4 * w[1][0] * w[1][4]) +
                   2 * w[1][2] * (-4 * w[1][0] - 4 * w[1][4] - 2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4])) +
                   2 * w[1][3] * (-6 * w[1][0] - 2 * w[1][1] - 6 * w[1][4] - 2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4]) - 2 * w[1][2] * (3 - 2 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) + 4 * w[1][0] * w[1][4])));
-	out[7] = 0.5 * (10 - 8 * w[0][0] - 4 * w[0][1] - 2 * w[0][2] -
+    f[7] = 0.5 * (10 - 8 * w[0][0] - 4 * w[0][1] - 2 * w[0][2] -
                   2 * w[0][1] * (-2 * w[0][0] - 2 * w[0][4]) -
                   2 * w[0][2] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][4]) -
                   2 * w[0][3] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[0][4]) -
@@ -322,8 +133,7 @@ void Converter::lsf2lpc(std::array<float, 10>& lsfs, std::array<float, 10>& out)
                   2 * w[1][1] * (2 + 4 * w[1][0] * w[1][4]) +
                   2 * w[1][2] * (3 - 2 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) + 4 * w[1][0] * w[1][4]) +
                   2 * w[1][3] * (4 - 2 * w[1][1] * (-2 * w[1][0] - 2 * w[1][4]) - 2 * w[1][2] * (-2 * w[1][0] - 2 * w[1][1] - 2 * w[1][4]) + 4 * w[1][0] * w[1][4]));
-
-	out[8] = 0.5 * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[0][3] -
+    f[8] = 0.5 * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[0][3] -
                   2 * w[0][1] * (-2 * w[0][0] - 2 * w[0][4]) -
                   2 * w[0][2] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][4]) -
                   2 * w[0][3] * (-2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[0][4]) -
@@ -332,7 +142,23 @@ void Converter::lsf2lpc(std::array<float, 10>& lsfs, std::array<float, 10>& out)
                   2 * w[1][2] * (-2 * w[1][0] - 2 * w[1][1] - 2 * w[1][4]) +
                   2 * w[1][3] * (-2 * w[1][0] - 2 * w[1][1] - 2 * w[1][2] - 2 * w[1][4]) -
                   2 * w[1][4] - 4 * w[1][0] * w[1][4]);
-
-	out[9] = 0.5 * (2 - 2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[0][3] - 2 * w[0][4] +
+    f[9] = 0.5 * (2 - 2 * w[0][0] - 2 * w[0][1] - 2 * w[0][2] - 2 * w[0][3] - 2 * w[0][4] +
                   2 * w[1][0] + 2 * w[1][1] + 2 * w[1][2] + 2 * w[1][3] + 2 * w[1][4]);
+    return f;
+}
+
+int main()
+{
+    std::vector<float> lsfs = {204.578376, 355.21086, 842.26336, 1162.29394, 1584.92658,
+                               2008.223452, 2459.757432, 3022.959536, 3305.890072, 3552.423452};
+    std::vector<float> result = melp_lsf21pc(lsfs);
+
+    std::cout << "Result: ";
+    for (const float &value : result)
+    {
+        std::cout << value << " ";
+    }
+    std::cout << std::endl;
+
+    return 0;
 }

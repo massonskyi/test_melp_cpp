@@ -179,7 +179,6 @@ void QLPC::msvq(const std::array<float, 10>& koef_lpc,
     		}
     	}
     }
-    std::array<float,4> g;
-    std::copy(d[0].begin() + 11, d[0].end(),g.begin());
+    std::copy(d[0].begin() + 11, d[0].end(),out.begin());
     int x = 43;
 }
