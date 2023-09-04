@@ -3,7 +3,7 @@
 
 #include <array>
 #include <iterator>
-
+#include <numeric>
 /**
  * @brief A template class that implements a linear filter.
  *
@@ -74,14 +74,26 @@ public:
 		}
 		else
 		{
+
 		    for (int n = 0; n < StepSize; n++) {
 		    	*(output + n) = 0;
 		        for (int k = 0; k < NumSize; k++) {
-		            if (n - k >= 0 && n - k < StepSize) {
-		            	*(output + n) += *(signal + (n - k)) * b[k];
+		        	if (n >= k) {
+		            	*(output + n) += *(signal + n - k) * b[k];
 		            }
 		        }
 		    }
+			/*
+		    for (size_t n = 0; n < StepSize; n++) {
+		        *(output + n) = 0;
+	            float sum = 0.0;
+	            for (size_t j = 0; j < NumSize; j++) {
+	            	if (n >= j) {
+	                    sum += b[j] * *(signal + n - j);
+	                }
+	            }
+	            *(output + n)  = *(signal + n) - sum;
+		    }*/
 		}
 	}
 

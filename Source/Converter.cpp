@@ -5,8 +5,6 @@
 #include <cmath>
 #include <vector>
 
-const float pi = 3.141592653589793;
-
 /**
  * @brief This is the constructor for the Converter class.
  *
@@ -125,7 +123,7 @@ void Converter::lpc2lsf(const std::array<float, 10> &koef_lpc,
 	f1[0] = 0;
 	for (ii = 0; ii < 2; ii++)
 	{
-		k = pi / 60;
+		k = M_PI / 60;
 		y1 = std::accumulate(P[ii].begin(), P[ii].end(), 0.0);
 		i = 1;
 		while (i < 61)
@@ -200,7 +198,7 @@ void Converter::lsf2lpc(std::array<float, 10>& lsfs, std::array<float, 10>& out)
 {
 	for (int i = 0; i < 10; i++)
 	{
-		lsfs[i] = pi * lsfs[i] / 4000;
+		lsfs[i] = M_PI * lsfs[i] / 4000;
 	}
 	for (int i = 0; i < 5; i++)
 	{

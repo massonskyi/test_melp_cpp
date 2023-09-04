@@ -1,11 +1,11 @@
 #include <cmath>
+#include <numeric>
+#include <algorithm>
 #include "Encoder.hpp"
 #include "Coeffs.hpp"
 #include "stage.h"
-#include <numeric>
-#include <algorithm>
 #include "codebook_fmcq.hpp"
-#include "MVSQ.hpp"
+
 Encoder::Encoder()
 	: pavg(50),G2p(20),array_hamming({}), envelopes_filter(smooth_num, smooth_den),
 	  cheb_filter(dcr_num, dcr_den),
@@ -18,38 +18,41 @@ Encoder::Encoder()
 		BandFilter(butt_bp_num[4],butt_bp_den[4])
 	  }),
 	  hpFilter(butt_1000num, butt_1000den),
+	  mv(),
 	  conv_lpc(),
 	  conv_e_resid(),
-	  lpc({}), conv({}), qlpc({}), buffer({50,50,50}),
+	  lpc({}), conv({}), buffer({50,50,50}),
 	  koef_lpc({}), temp({}), LSF({}),
 	  sig_in({}), sig_1000({}),envelopes({{}}),
 	  bands({{}}),
+	  lpc2({}),
+	  lsfs({}),
 	  tmp1({{}}),
 	  e_resid({}),
 	  fltd_resid({}),
 	  tresid({}),
 	  copy_sigin({}),
+	  new_frame({}),
 	  resid2({}),
-	  tmp({}){
+	  nlpc2({}),
+	  tmp({}),
+	  a({}),
+	  G({}),
+	  vp({}),
+	  ls({}),
+	  klpc({}){
 	hamming.use_hamming(200, array_hamming);
+    nlpc2[0] = 1;
 }
 
 
-void Encoder::encode(std::array<float, 180>& signal){
-	int cur_intp = 0, Qpitch = 0;
-	std::array<float,10>lsfs;
-	std::array<float,10>lpc2;
-	mvsq *mv = new mvsq();
+ParamsFrame Encoder::encode(std::array<float, 180>& signal){
+	int cur_intp = 0;
 	int jitter = 0;
 	float peak = 0;
-	std::array<float,1> a({});
-	std::array<float, 2> G({});
-	std::array<float, 5> vp({});
-	std::array<float, 4> ls({});
-	std::array<float, 11> klpc({});
-	std::pair<float,float> tp = {0.0f,0.0f};
-	std::pair<float, float> pr3 = {0.0f, 0.0f};
+	int QFM = 0;
 
+	reset();
 	updating_buffers();
 
 	cheb_filter.step(signal.begin(), sig_in.begin() + 180);
@@ -67,6 +70,7 @@ void Encoder::encode(std::array<float, 180>& signal){
 	melp_bpva(bands, envelopes,tp.first,vp.begin() + 1);
 
 	if(vp[0] < 0.5) jitter = 1;
+
 	else jitter = 0;
 
 	std::copy(sig_in.begin() + 80, sig_in.begin() + 280, temp.begin());
@@ -77,7 +81,6 @@ void Encoder::encode(std::array<float, 180>& signal){
     }
 	std::copy(koef_lpc.begin(), koef_lpc.end(), klpc.begin() + 1);
     klpc[0] = 1.0;
-    // lpc_residual(klpc,sig_in,e_resid);
     conv_e_resid.set_coeffs(klpc, a);
     conv_e_resid.step(sig_in.begin(), e_resid.begin());
 
@@ -100,33 +103,39 @@ void Encoder::encode(std::array<float, 180>& signal){
 
     lsf_clmp(LSF, LSF);
 
-    // qlpc.msvq(koef_lpc, LSF, ls);
-    melp_msvq(mv, koef_lpc, LSF, st1, st2, ls);
+    mv.melp_msvq(koef_lpc, LSF, st1, st2, ls);
     QGain(G,G2p);
 
     G2p = G[1];
 
-    if(vp[0] > 0.6) Qpitch = melp_Qpitch(pr3.first);
+    // if(vp[0] > 0.6) Qpitch = melp_Qpitch(pr3.first);
 
     d_lsf(ls, lsfs);
 
     conv.lsf2lpc(lsfs, lpc2);
-    conv_lpc.set_coeffs(lpc2, a);
+
+    std::copy(lpc2.begin(), lpc2.end(), nlpc2.begin() + 1);
+    conv_lpc.set_coeffs(nlpc2, a);
+
     std::copy(sig_in.begin() + 75, sig_in.begin() + 285, copy_sigin.begin());
-    conv_lpc.step(copy_sigin.begin() + 75, tresid.begin());
+    conv_lpc.step(copy_sigin.begin(), tresid.begin());
 
     for(int i = 0; i < 200; i++){
-    	resid2[i] = *(tresid.begin() + 10 + i) * array_hamming[i];
+    	resid2[i] = *(tresid.begin() + i + 10) * array_hamming[i];
     }
+
     fft<512>(resid2);
+
     for(int i = 0;i < 512; i++){
     	magf[i] = std::abs(resid2[i]);
     }
+
     find_harm(magf, pr3.first);
     computeWeights(pr3.first);
-    int QFM = melp_FMCQ(FMCQ_CODEBOOK);
-    // ParamsFrame(ls,G,vp,QFM,Qpitch,jitter);
-    int breakp = 0;
+    QFM = melp_FMCQ(FMCQ_CODEBOOK);
+
+    new_frame.set_params(ls,QFM,G,pr3.first,vp,jitter);
+    return new_frame;
 }
 
 void Encoder::updating_buffers(){
@@ -497,5 +506,128 @@ void Encoder::d_lsf(const std::array<float, 4>& codeword, std::array<float,10>& 
 	}
 	for(int i = 0; i < 10; i++){
 		lsfs[i] = tmp1[0][i] + tmp1[1][i] + tmp1[2][i] + tmp1[3][i];
+	}
+}
+
+void Encoder::find_harm(const std::array<float, 512>& res, float p3) {
+    int down = static_cast<int>(256 / p3);
+    int M = static_cast<int>(p3 / 4);
+    if (M < 10) {
+        for (int n = 0; n < M; ++n) {
+            int up = static_cast<int>((n + 0.5) * 512 / p3);
+            const auto max_el = std::max_element(std::begin(res) + down, std::begin(res) + up + 1);
+            mag[n] = *max_el;
+            down = up + 1;
+        }
+        float normalizer = std::sqrt(M) / std::sqrt(std::accumulate(std::begin(mag), std::begin(mag) + M, 0.0f, [](float sum, float val) {
+            return sum + (val * val);
+        }));
+        std::transform(std::begin(mag), std::begin(mag) + M, std::begin(mag), [normalizer](float val) {
+            return val * normalizer;
+        });
+        std::fill(std::begin(mag) + M, std::end(mag), 1.0f);
+    }
+    else {
+        for (int n = 0; n < 10; ++n) {
+            int up = static_cast<int>((n + 0.5) * 512 / p3);
+            const auto max_el = std::max_element(std::begin(res) + down, std::begin(res) + up + 1);
+            mag[n] = *max_el;
+            down = up + 1;
+        }
+        float normalizer = std::sqrt(10) / std::sqrt(std::accumulate(std::begin(mag), std::end(mag), 0.0f, [](float sum, float val) {
+            return sum + (val * val);
+        }));
+        std::transform(std::begin(mag), std::end(mag), std::begin(mag), [normalizer](float val) {
+            return val * normalizer;
+        });
+    }
+}
+void Encoder::computeWeights(float p3) {
+    float w0 = 2 * M_PI / p3;
+    for (int j = 0; j < 10; ++j) {
+        float wj = w0 * (j + 1);
+        Wf[j] = 117 / (25 + 75 *std::pow((1 + 1.4 * std::sqrt(wj / (0.25 * M_PI))),0.69));
+    }
+}
+
+int Encoder::melp_FMCQ(std::array<std::array<float,10>, 256>FMCQ_CODEBOOK) {
+
+    float temp = 1000;
+    int f = 0;
+
+    for (int n = 0; n < 256; ++n) {
+        const std::array<float, 10>& codebook = FMCQ_CODEBOOK[n];
+        std::array<float, 10> u;
+        std::transform(std::begin(codebook), std::end(codebook), std::begin(mag), std::begin(u), std::minus<float>());
+
+        float rms = std::inner_product(std::begin(Wf), std::end(Wf), std::begin(u), 0.0f, std::plus<float>(), [](float w, float val) {
+            return w * val * val;
+        });
+
+        if (rms < temp) {
+            temp = rms;
+            f = n;
+        }
+    }
+
+    return f;
+}
+template <std::size_t N>
+void Encoder::fft(std::array<float, N>& x){
+	  if constexpr (N <= 1) {
+	    return;
+	  }
+
+	  std::array<float, N / 2> even;
+	  std::array<float, N / 2> odd;
+
+	  for (std::size_t i = 0; i < N / 2; ++i) {
+	    even[i] = x[2 * i];
+	    odd[i] = x[2 * i + 1];
+	  }
+
+	  fft(even);
+	  fft(odd);
+
+	  for (std::size_t k = 0; k < N / 2; ++k) {
+	    float angle = -2 * M_PI * k / N;
+	    std::complex<float> t(std::cos(angle), std::sin(angle));
+	    std::complex<float> temp = t * odd[k];
+	    x[k] = even[k] + temp.real();
+	    x[k + N / 2] = even[k] - temp.real();
+	  }
+};
+
+template<typename T>
+T Encoder::fix(T value) {
+    if (value >= 0) {
+        return std::floor(value);
+    } else {
+        return std::ceil(value);
+    }
+};
+void Encoder::reset(){
+	std::fill(koef_lpc.begin(), koef_lpc.end(),0.0f);
+	std::fill(temp.begin(), temp.end(), 0.0f);
+	std::fill(LSF.begin(), LSF.end(), 0.0f);
+	std::fill(nlpc2.begin(), nlpc2.end(), 0.0f);
+	std::fill(e_resid.begin(), e_resid.end(), 0.0f);
+	std::fill(fltd_resid.begin(), fltd_resid.end(), 0.0f);
+	std::fill(tresid.begin(), tresid.end(), 0.0f);
+	std::fill(copy_sigin.begin(), copy_sigin.end(), 0.0f);
+	std::fill(resid2.begin(), resid2.end(), 0.0f);
+	std::fill(magf.begin(), magf.end(), 0.0f);
+	std::fill(tmp.begin(), tmp.end(), 0.0f);
+	std::fill(Wf.begin(), Wf.end(), 0.0f);
+	std::fill(mag.begin(), mag.end(), 0.0f);
+	a[0] = 0;
+	std::fill(G.begin(), G.end(), 0.0f);
+	std::fill(vp.begin(), vp.end(), 0.0f);
+	std::fill(ls.begin(), ls.end(), 0.0f);
+	std::fill(klpc.begin(), klpc.end(), 0.0f);
+	tp = {0.0f, 0.0f};
+	pr3 = {0.0f, 0.0f};
+	for(int i = 0; i < 4;i++){
+		std::fill(tmp1[i].begin(), tmp1[i].end(), 0.0f);
 	}
 }
